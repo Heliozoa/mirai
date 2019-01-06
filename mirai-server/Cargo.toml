@@ -1,0 +1,8 @@
+[package]
+name = "mirai-server"
+version = "0.1.0"
+authors = ["Heliozoa <dm89132@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+mirai-core = { path = "../mirai-core" }
