@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    "mirai-core",
+    "mirai-matchmaking-client",
+    "mirai-matchmaking-server",
+    "mirai-game-client",
+    "mirai-game",
+]

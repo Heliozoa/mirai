@@ -1,0 +1,9 @@
+[package]
+name = "mirai-game-client"
+version = "0.1.0"
+authors = ["sasami-san"]
+edition = "2018"
+
+[dependencies]
+laminar = "0.3.2"
+crossbeam-channel = "*"

@@ -1,0 +1,12 @@
+[package]
+name = "mirai-matchmaking-client"
+version = "0.1.0"
+authors = ["sasami-san"]
+edition = "2018"
+
+[dependencies]
+mirai-core = { path = "../mirai-core" }
+serde = {version = "1.0", features = ["derive"]}
+bincode = "1.2"
+laminar = "0.3.2"
+crossbeam-channel = "*"
