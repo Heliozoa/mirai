@@ -2,6 +2,7 @@ use bincode;
 use crossbeam_channel::{Receiver as CrossReceiver, Sender as CrossSender};
 use ggez::{event::KeyCode, input, Context};
 use laminar::{Packet, SocketEvent};
+use mirai_game_client::Client;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -88,12 +89,8 @@ impl InputSourceKind {
         ))
     }
 
-    pub fn remote(
-        opp_addr: SocketAddr,
-        sender: CrossSender<Packet>,
-        receiver: CrossReceiver<SocketEvent>,
-    ) -> Self {
-        Self::Remote(RemoteInputSource::new(opp_addr, sender, receiver))
+    pub fn remote(client: Client) -> Self {
+        Self::Remote(RemoteInputSource::new(client))
     }
 
     pub fn latest_fully_confirmed(&self) -> u32 {
@@ -143,18 +140,14 @@ enum Message {
 }
 
 struct RemoteInputSource {
-    opp_addr: SocketAddr,
+    client: Client,
     sender: Sender<Message>,
     inputs: Arc<Mutex<BTreeMap<u32, Input>>>,
     latest_fully_confirmed: Arc<Mutex<u32>>,
 }
 
 impl RemoteInputSource {
-    fn new(
-        opp_addr: SocketAddr,
-        packet_sender: CrossSender<Packet>,
-        event_receiver: CrossReceiver<SocketEvent>,
-    ) -> Self {
+    fn new(client: Client) -> Self {
         // start thread
         let mut inputs = BTreeMap::new();
         inputs.insert(0, Input::default());
@@ -163,19 +156,8 @@ impl RemoteInputSource {
         let latest_fully_confirmed = Arc::new(Mutex::new(0));
         let thread_latest_fully_confirmed = Arc::clone(&latest_fully_confirmed);
         let (sender, receiver) = channel();
-        // spawn thread for sending and receiving packets
-        std::thread::spawn(move || {
-            Self::handle_packets(
-                opp_addr,
-                packet_sender,
-                event_receiver,
-                receiver,
-                thread_inputs,
-                thread_latest_fully_confirmed,
-            )
-        });
         Self {
-            opp_addr,
+            client,
             sender,
             inputs,
             latest_fully_confirmed,
@@ -203,67 +185,6 @@ impl RemoteInputSource {
             .latest_fully_confirmed
             .lock()
             .expect("failed to get lock for confirm")
-    }
-
-    fn handle_packets(
-        opp_addr: SocketAddr,
-        packet_sender: CrossSender<Packet>,
-        event_receiver: CrossReceiver<SocketEvent>,
-        receiver: Receiver<Message>,
-        inputs: Arc<Mutex<BTreeMap<u32, Input>>>,
-        latest_fully_confirmed: Arc<Mutex<u32>>,
-    ) {
-        loop {
-            while let Ok(event) = event_receiver.try_recv() {
-                match event {
-                    SocketEvent::Packet(packet) => {
-                        // try to deserialize incoming packet
-                        match bincode::deserialize::<NetworkInput>(&packet.payload()) {
-                            Ok(input) => {
-                                let mut frame = input.frame;
-                                let mut inputs =
-                                    inputs.lock().expect("failed to get lock for inputs in evr");
-                                println!("received {} inputs for {}", input.inputs.len(), frame);
-                                frame += 1;
-                                for input in input.inputs {
-                                    // reverse inputs, the opponent is playing as p1 but on our side they are p2
-                                    let input = Input {
-                                        left: input.right,
-                                        right: input.left,
-                                        ..input
-                                    };
-                                    frame -= 1;
-                                    inputs.insert(frame, input);
-                                }
-                                // update latest fully confirmed
-                                let mut latest_fully_confirmed = latest_fully_confirmed
-                                    .lock()
-                                    .expect("failed to get lock for confirm in evr");
-                                for f in *latest_fully_confirmed + 1.. {
-                                    if !inputs.contains_key(&f) {
-                                        *latest_fully_confirmed = f - 1;
-                                        break;
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            while let Ok(msg) = receiver.try_recv() {
-                match msg {
-                    Message::Inputs(frame, inputs) => {
-                        let msg = bincode::serialize(&NetworkInput { frame, inputs })
-                            .expect("failed to serialize ni");
-                        packet_sender
-                            .send(Packet::unreliable(opp_addr, msg))
-                            .expect("failed to send packet");
-                    }
-                }
-            }
-        }
     }
 }
 

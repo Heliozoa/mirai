@@ -5,7 +5,8 @@ use game::Game;
 use ggez::event::KeyCode;
 use ggez::*;
 use inputs::*;
-use mirai_matchmaking_client::Client;
+use mirai_game_client::Client as GameClient;
+use mirai_matchmaking_client::{Client, PeerStatus};
 use std::env;
 use std::io::Result;
 use std::net::SocketAddr;
@@ -33,56 +34,40 @@ fn main() -> Result<()> {
         p2_input = InputSourceKind::local(KeyCode::Left, KeyCode::Right, KeyCode::Down);
     } else {
         // matchmaking
-        let challenge;
-        let mut s = String::new();
-        println!("input 1 for challenge, 2 for wait");
-        std::io::stdin().read_line(&mut s).unwrap();
-        match s.trim().parse() {
-            Ok(1) => challenge = true,
-            Ok(2) => challenge = false,
-            _ => panic!("asd"),
-        }
-        println!("{}", challenge);
 
-        let client = Client::new(LOCAL_IP.parse().unwrap(), server_ip.parse().unwrap());
+        let mut client = Client::new(LOCAL_IP.parse().unwrap(), server_ip.parse().unwrap());
         // matchmaking
         client.dequeue();
         client.queue();
-        'ret: loop {
-            if challenge {
-                let matches = client.check_matches();
-                for (k, v) in matches {
-                    if let Some(l) = v {
-                        println!("challenging");
-                        client.challenge(k);
-                        break 'ret;
+        let opp = 'ret: loop {
+            let matches = client.peers();
+            for mut peer in matches {
+                if let Some(l) = peer.latency() {
+                    match peer.status() {
+                        PeerStatus::Confirmed => {
+                            println!("confirmed");
+                            break 'ret peer;
+                        }
+                        PeerStatus::IncomingChallenge => {
+                            println!("accepting");
+                            client.accept(&mut peer);
+                        }
+                        PeerStatus::None => {
+                            println!("challenging");
+                            client.challenge(&mut peer);
+                        }
+                        _ => {}
                     }
-                }
-            } else {
-                match client.check_challenge_status() {
-                    ChallengeStatus::Incoming(_) => {
-                        println!("accepting");
-                        client.accept_challenge();
-                        break 'ret;
-                    }
-                    _ => {}
                 }
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-        let opp_addr = loop {
-            match client.check_challenge_status() {
-                ChallengeStatus::Confirmed(opp) => {
-                    println!("confirmed");
-                    client.dequeue();
-                    break opp;
-                }
-                _ => {}
-            }
         };
+
+        client.dequeue();
+        let (receiver, sender) = client.close();
+        let client = GameClient::new(opp.addr(), receiver, sender);
         while let Some(_) = client.check_time_until_start() {}
-        let (sender, receiver) = client.to_sender_receiver();
-        p2_input = InputSourceKind::remote(opp_addr, sender, receiver);
+        p2_input = InputSourceKind::remote(client);
     }
 
     let input_source = InputSource::new(p1_input, p2_input);
