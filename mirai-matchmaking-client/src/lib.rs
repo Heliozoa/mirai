@@ -29,11 +29,20 @@ pub enum ClientToClient {
     Start(u128),
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum PeerStatus {
+    None,
+    OutgoingChallenge,
+    IncomingChallenge,
+    Confirmed,
+}
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Peer {
     addr: SocketAddr,
     latency: Option<u128>,
     ping_count: u32,
+    status: PeerStatus,
 }
 
 impl Peer {
@@ -42,6 +51,7 @@ impl Peer {
             addr,
             latency: None,
             ping_count: 0,
+            status: PeerStatus::None,
         }
     }
 
@@ -51,6 +61,18 @@ impl Peer {
             Some(latency) => self.latency = Some(latency / 2 + ping_latency / 2),
             None => self.latency = Some(ping_latency),
         }
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    pub fn latency(&self) -> Option<u128> {
+        self.latency
+    }
+
+    pub fn status(&self) -> PeerStatus {
+        self.status
     }
 }
 
@@ -298,19 +320,25 @@ impl Client {
         }
     }
 
-    pub fn challenge(&self, addr: SocketAddr) {
+    pub fn challenge(&self, peer: &mut Peer) {
         let msg = bincode::serialize(&ToClient::Challenge).unwrap();
         self.packet_sender
-            .send(Packet::reliable_unordered(addr, msg))
+            .send(Packet::reliable_unordered(peer.addr, msg))
             .unwrap();
-        self.outgoing_challenges.lock().unwrap().insert(addr);
+        peer.status = PeerStatus::OutgoingChallenge;
+        self.outgoing_challenges.lock().unwrap().insert(peer.addr);
     }
 
-    pub fn accept(&self, addr: SocketAddr) {
-        if self.incoming_challenges.lock().unwrap().contains(&addr) {
+    pub fn accept(&self, peer: &mut Peer) {
+        if self
+            .incoming_challenges
+            .lock()
+            .unwrap()
+            .contains(&peer.addr)
+        {
             let msg = bincode::serialize(&ToClient::Accept).unwrap();
             self.packet_sender
-                .send(Packet::reliable_unordered(addr, msg))
+                .send(Packet::reliable_unordered(peer.addr, msg))
                 .unwrap();
         }
     }
@@ -356,7 +384,6 @@ mod test {
 
     #[test]
     fn sample_test() {
-
         let ip1 = "127.0.0.1".parse().unwrap();
         let ip2 = "127.0.0.2".parse().unwrap();
         let addr1 = SocketAddr::new(ip1, CLIENT_PORT);
@@ -392,11 +419,11 @@ mod test {
         }
 
         thread::sleep(Duration::from_millis(100));
-        for peer in client1.peers() {
-            client1.challenge(peer.addr);
+        for mut peer in client1.peers() {
+            client1.challenge(&mut peer);
         }
-        for peer in client2.peers() {
-            client2.challenge(peer.addr);
+        for mut peer in client2.peers() {
+            client2.challenge(&mut peer);
         }
 
         thread::sleep(Duration::from_millis(400));
