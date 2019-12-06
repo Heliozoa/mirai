@@ -356,25 +356,52 @@ mod test {
 
     #[test]
     fn sample_test() {
+
         let ip1 = "127.0.0.1".parse().unwrap();
         let ip2 = "127.0.0.2".parse().unwrap();
         let addr1 = SocketAddr::new(ip1, CLIENT_PORT);
         let addr2 = SocketAddr::new(ip2, CLIENT_PORT);
-        let client1 = Client::new(ip1, "127.0.0.1".parse().unwrap());
-        let client2 = Client::new(ip2, "127.0.0.1".parse().unwrap());
-        client1
-            .peers
-            .lock()
-            .unwrap()
-            .insert(addr2, Peer::new(addr2));
-        client2
-            .peers
-            .lock()
-            .unwrap()
-            .insert(addr1, Peer::new(addr1));
-        thread::sleep(Duration::from_secs(8));
-        println!("{:?}", client1.peers.lock().unwrap());
-        println!("{:?}", client2.peers.lock().unwrap());
+        let mut client1 = Client::new(ip1, ip1);
+        let mut client2 = Client::new(ip2, ip1);
+
+        let mut server = Socket::bind((ip1, SERVER_PORT)).unwrap();
+
+        client1.queue();
+        client2.queue();
+
+        thread::sleep(Duration::from_millis(100));
+        server.manual_poll(Instant::now());
+        while let Some(event) = server.recv() {
+            if let SocketEvent::Packet(packet) = event {
+                if packet.addr() == addr1 {
+                    let mut peers = HashSet::new();
+                    peers.insert(addr2);
+                    let payload = bincode::serialize(&FromServer::Peers(peers)).unwrap();
+                    let response = Packet::reliable_unordered(packet.addr(), payload);
+                    server.send(response).unwrap();
+                    server.manual_poll(Instant::now());
+                } else {
+                    let mut peers = HashSet::new();
+                    peers.insert(addr1);
+                    let payload = bincode::serialize(&FromServer::Peers(peers)).unwrap();
+                    let response = Packet::reliable_unordered(packet.addr(), payload);
+                    server.send(response).unwrap();
+                    server.manual_poll(Instant::now());
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(100));
+        for peer in client1.peers() {
+            client1.challenge(peer.addr);
+        }
+        for peer in client2.peers() {
+            client2.challenge(peer.addr);
+        }
+
+        thread::sleep(Duration::from_millis(400));
+        println!("{:?}", client1.status.lock());
+        println!("{:?}", client2.status.lock());
         unimplemented!();
     }
 }
