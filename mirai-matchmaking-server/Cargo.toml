@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 mirai-core = { path = "../mirai-core" }
-bincode = "1.2"
+bincode = "1.2.0"
 laminar = "0.3.2"
 crossbeam-channel = "*"
 snafu = "0.6"
