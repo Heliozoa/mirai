@@ -9,6 +9,4 @@ mirai-core = { path = "../mirai-core" }
 bincode = "1.2"
 laminar = "0.3.2"
 crossbeam-channel = "*"
-
-[dev-dependencies]
-lazy_static = "1.4.0"
+snafu = "0.6"
