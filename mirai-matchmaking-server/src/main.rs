@@ -1,8 +1,7 @@
 use crossbeam_channel::SendError;
-//use error::{ServerError::*, *};
 use laminar::{Packet, Socket, SocketEvent};
 use mirai_core::v1::{server::*, SERVER_PORT};
-use snafu::{ensure, Backtrace, ErrorCompat, ResultExt, Snafu};
+use snafu::{ErrorCompat, ResultExt, Snafu};
 use std::{collections::HashSet, env, net::SocketAddr};
 
 /// The Mirai matchmaking server facilitates peer discovery for Mirai matchmaking clients.
@@ -38,6 +37,7 @@ fn run() -> Result<(), StartError> {
     let socket = Socket::bind(local_addr).context(SocketErr)?;
     with_socket(socket).context(InternalServerError)
 }
+
 #[derive(Debug, Snafu)]
 pub enum StartError {
     #[snafu(display("missing IP parameter"))]
@@ -114,6 +114,7 @@ fn with_socket(mut socket: Socket) -> Result<(), ServerError> {
         }
     }
 }
+
 #[derive(Debug, Snafu)]
 pub enum ServerError {
     #[snafu(display("laminar error: {}", source))]
