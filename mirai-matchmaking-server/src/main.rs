@@ -1,18 +1,63 @@
 use crossbeam_channel::SendError;
+//use error::{ServerError::*, *};
 use laminar::{Packet, Socket, SocketEvent};
 use mirai_core::v1::{server::*, SERVER_PORT};
+use snafu::{ensure, Backtrace, ErrorCompat, ResultExt, Snafu};
 use std::{collections::HashSet, env, net::SocketAddr};
 
-fn main() -> Result {
-    let args: Vec<_> = env::args().collect();
-    let local_ip = &args[1];
-    let local_addr = SocketAddr::new(local_ip.parse().unwrap(), SERVER_PORT);
-    let socket = Socket::bind(local_addr)?;
-    with_socket(socket)
+/// The Mirai matchmaking server facilitates peer discovery for Mirai matchmaking clients.
+/// The server can receive the following messages:
+///     StatusCheck
+///         returns Alive to signal that it's running
+///     Queue
+///         if the client is not already in the queue, adds the client to the queue
+///         selects a set of potential matches (currently the entire queue)
+///         sends the client's info to all potential matches
+///         returns the potential matches to the client
+///     Dequeue
+///         removes the client from the queue
+///     Heartbeat
+///         ignored
+/// Clients are dequeued when the connection times out.
+///
+/// Run using cargo run server_ip, e.g. cargo run 127.0.0.1
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("{}", e);
+        if let Some(backtrace) = ErrorCompat::backtrace(&e) {
+            println!("{}", backtrace);
+        }
+    }
 }
 
-fn with_socket(mut socket: Socket) -> Result {
-    println!("starting server at {:?}", socket.local_addr().unwrap());
+fn run() -> Result<(), StartError> {
+    let args: Vec<_> = env::args().collect();
+    let local_ip = args.get(1).ok_or(StartError::MissingIp)?;
+    let local_ip = local_ip.parse().context(InvalidIp { ip: local_ip })?;
+    let local_addr = SocketAddr::new(local_ip, SERVER_PORT);
+    let socket = Socket::bind(local_addr).context(SocketErr)?;
+    with_socket(socket).context(InternalServerError)
+}
+#[derive(Debug, Snafu)]
+pub enum StartError {
+    #[snafu(display("missing IP parameter"))]
+    MissingIp,
+    #[snafu(display("invalid IP '{}': {}", ip, source))]
+    InvalidIp {
+        ip: String,
+        source: std::net::AddrParseError,
+    },
+    #[snafu(display("binding error: {}", source))]
+    SocketErr { source: laminar::ErrorKind },
+    #[snafu(display("internal server error: {}", source))]
+    InternalServerError { source: ServerError },
+}
+
+fn with_socket(mut socket: Socket) -> Result<(), ServerError> {
+    println!(
+        "starting server at {:?}",
+        socket.local_addr().context(SocketError)?
+    );
     let packet_sender = socket.get_packet_sender();
     let event_receiver = socket.get_event_receiver();
     let _thread = std::thread::spawn(move || socket.start_polling());
@@ -29,35 +74,31 @@ fn with_socket(mut socket: Socket) -> Result {
                     match bincode::deserialize::<FromClient>(payload) {
                         Ok(msg) => match msg {
                             FromClient::StatusCheck => {
-                                let msg = bincode::serialize(&ToClient::Alive)?;
-                                packet_sender.send(Packet::reliable_unordered(source, msg))?;
+                                let msg =
+                                    bincode::serialize(&ToClient::Alive).context(SerializeError)?;
+                                packet_sender
+                                    .send(Packet::reliable_unordered(source, msg))
+                                    .context(SenderError)?;
                             }
                             FromClient::Queue => {
-                                if !queue.contains(&source) {
-                                    println!("queuing {}", source);
-                                    let msg = bincode::serialize(&ToClient::Peers(queue.clone()))?;
-                                    packet_sender.send(Packet::reliable_unordered(source, msg))?;
-                                    for &client in &queue {
-                                        let msg = bincode::serialize(&ToClient::Queued(source))?;
-                                        packet_sender
-                                            .send(Packet::reliable_unordered(client, msg))?;
-                                    }
-                                    queue.insert(source);
-                                } else {
-                                    let mut queue = queue.clone();
-                                    queue.remove(&source);
-                                    let msg = bincode::serialize(&ToClient::Peers(queue))?;
-                                    packet_sender.send(Packet::reliable_unordered(source, msg))?;
+                                let mut queue_clone = queue.clone();
+                                queue_clone.remove(&source);
+                                let msg = bincode::serialize(&ToClient::Peers(queue_clone.clone()))
+                                    .context(SerializeError)?;
+                                packet_sender
+                                    .send(Packet::reliable_unordered(source, msg))
+                                    .context(SenderError)?;
+                                for &client in &queue_clone {
+                                    let msg = bincode::serialize(&ToClient::Queued(source))
+                                        .context(SerializeError)?;
+                                    packet_sender
+                                        .send(Packet::reliable_unordered(client, msg))
+                                        .context(SenderError)?;
                                 }
+                                queue.insert(source);
                             }
                             FromClient::Dequeue => {
-                                if queue.remove(&source) {
-                                    for &client in &queue {
-                                        let msg = bincode::serialize(&ToClient::Dequeued(source))?;
-                                        packet_sender
-                                            .send(Packet::reliable_unordered(client, msg))?;
-                                    }
-                                }
+                                queue.remove(&source);
                             }
                             FromClient::Heartbeat => { /* heartbeat, ignore */ }
                         },
@@ -73,48 +114,18 @@ fn with_socket(mut socket: Socket) -> Result {
         }
     }
 }
-
-// error handling types
-type Result = std::result::Result<(), ServerError<Packet>>;
-type IoError = std::io::Error;
-type LaminarError = laminar::ErrorKind;
-type BincodeError = std::boxed::Box<bincode::ErrorKind>;
-
-#[derive(Debug)]
-enum ServerError<E> {
-    Io(IoError),
-    Laminar(LaminarError),
-    Bincode(BincodeError),
-    CrossbeamError(SendError<E>),
+#[derive(Debug, Snafu)]
+pub enum ServerError {
+    #[snafu(display("laminar error: {}", source))]
+    SocketError { source: laminar::ErrorKind },
+    #[snafu(display("error serializing: {}", source))]
+    SerializeError {
+        source: std::boxed::Box<bincode::ErrorKind>,
+    },
+    #[snafu(display("error sending: {}", source))]
+    SenderError { source: SendError<Packet> },
 }
 
-impl<E> From<IoError> for ServerError<E> {
-    fn from(io: IoError) -> ServerError<E> {
-        ServerError::Io(io)
-    }
-}
-
-impl<E> From<LaminarError> for ServerError<E> {
-    fn from(laminar: LaminarError) -> ServerError<E> {
-        ServerError::Laminar(laminar)
-    }
-}
-
-impl<E> From<BincodeError> for ServerError<E> {
-    fn from(bincode: BincodeError) -> ServerError<E> {
-        ServerError::Bincode(bincode)
-    }
-}
-
-impl<E> From<SendError<E>> for ServerError<E> {
-    fn from(crossbeam: SendError<E>) -> ServerError<E> {
-        ServerError::CrossbeamError(crossbeam)
-    }
-}
-
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
 #[cfg(test)]
 mod test {
     use super::*;
@@ -196,65 +207,69 @@ mod test {
         let addr_1 = socket_1.local_addr().unwrap();
         let addr_2 = socket_2.local_addr().unwrap();
         let addr_3 = socket_3.local_addr().unwrap();
-        println!("{:?}", addr_1);
-        println!("{:?}", addr_2);
-        println!("{:?}", addr_3);
+        println!("1: {:?}", addr_1);
+        println!("2: {:?}", addr_2);
+        println!("3: {:?}", addr_3);
         wait_for_server(server_addr);
 
-        // first to queue gets an empty peer set
         send(&mut socket_1, FromClient::Queue, server_addr);
         let peers = expect_msg(&mut socket_1, ToClient::Peers(HashSet::new())).unwrap();
         if let ToClient::Peers(peer_list) = peers {
-            assert_eq!(peer_list, HashSet::new());
+            assert_eq!(
+                peer_list,
+                HashSet::new(),
+                "first to queue gets an empty peer set"
+            );
         } else {
-            unreachable!()
+            unreachable!("first to queue did not receive peers")
         }
 
-        // second to queue gets the first peer in a set
         send(&mut socket_2, FromClient::Queue, server_addr);
         let peers = expect_msg(&mut socket_2, ToClient::Peers(HashSet::new())).unwrap();
         if let ToClient::Peers(peer_list) = peers {
             let mut expected = HashSet::new();
             expected.insert(addr_1);
-            assert_eq!(peer_list, expected);
+            assert_eq!(
+                peer_list, expected,
+                "second to queue gets the first peer in a set"
+            );
         } else {
-            unreachable!()
+            unreachable!("second to queue did not get peers")
         }
 
-        // first peer is notified of second peer
         let queued = expect_msg(&mut socket_1, ToClient::Queued(addr_2)).unwrap();
         if let ToClient::Queued(addr) = queued {
-            assert_eq!(addr, addr_2);
+            assert_eq!(addr, addr_2, "first peer is notified of second peer");
         } else {
-            unreachable!()
+            unreachable!("first peer was not notified")
         }
 
-        // third to queue receivers both previous peers in a set
         send(&mut socket_3, FromClient::Queue, server_addr);
         let peers = expect_msg(&mut socket_3, ToClient::Peers(HashSet::new())).unwrap();
         if let ToClient::Peers(peer_list) = peers {
             let mut expected = HashSet::new();
             expected.insert(addr_1);
             expected.insert(addr_2);
-            assert_eq!(peer_list, expected);
+            assert_eq!(
+                peer_list, expected,
+                "third to queue receivers both previous peers in a set"
+            );
         } else {
-            unreachable!()
+            unreachable!("third to queue did not receive peers")
         }
 
-        // first peer is notified of third
         let queued = expect_msg(&mut socket_1, ToClient::Queued(addr_3)).unwrap();
         if let ToClient::Queued(addr) = queued {
-            assert_eq!(addr, addr_3);
+            assert_eq!(addr, addr_3, "first peer is notified of third");
         } else {
-            unreachable!()
+            unreachable!("first peer was not notified")
         }
 
-        // second peer is notified of third
         let queued = expect_msg(&mut socket_2, ToClient::Queued(addr_3)).unwrap();
         if let ToClient::Queued(addr) = queued {
-            assert_eq!(addr, addr_3);
+            assert_eq!(addr, addr_3, "second peer is notified of third");
         } else {
-            unreachable!()
+            unreachable!("second peer was not notified")
         }
     }
 
@@ -265,26 +280,19 @@ mod test {
         start_test_server(server_socket);
         let mut socket_1 = Socket::bind_any().unwrap();
         let mut socket_2 = Socket::bind_any().unwrap();
-        let mut socket_3 = Socket::bind_any().unwrap();
-        let addr_2 = socket_2.local_addr().unwrap();
         wait_for_server(server_addr);
 
         send(&mut socket_1, FromClient::Queue, server_addr);
+        send(&mut socket_1, FromClient::Dequeue, server_addr);
         send(&mut socket_2, FromClient::Queue, server_addr);
-        send(&mut socket_3, FromClient::Queue, server_addr);
-        send(&mut socket_2, FromClient::Dequeue, server_addr);
 
-        println!("peer 1 is notified of 2's dequeue");
-        let dequeued = expect_msg(&mut socket_1, ToClient::Dequeued(addr_2)).unwrap();
-        if let ToClient::Dequeued(addr) = dequeued {
-            assert_eq!(addr, addr_2)
-        } else {
-            unreachable!()
-        }
-        println!("peer 3 is notified of 2's dequeue");
-        let dequeued = expect_msg(&mut socket_3, ToClient::Dequeued(addr_2)).unwrap();
-        if let ToClient::Dequeued(addr) = dequeued {
-            assert_eq!(addr, addr_2)
+        let peers = expect_msg(&mut socket_2, ToClient::Peers(HashSet::new())).unwrap();
+        if let ToClient::Peers(peers) = peers {
+            assert_eq!(
+                peers,
+                HashSet::new(),
+                "second to queue receives empty peer set"
+            );
         } else {
             unreachable!()
         }
@@ -302,11 +310,14 @@ mod test {
         send(&mut socket_1, FromClient::Queue, server_addr);
         std::thread::sleep(std::time::Duration::from_secs(6));
 
-        // first client should have timed out of the queue
         send(&mut socket_2, FromClient::Queue, server_addr);
         let peers = expect_msg(&mut socket_2, ToClient::Peers(HashSet::new())).unwrap();
         if let ToClient::Peers(peers) = peers {
-            assert_eq!(peers, HashSet::new());
+            assert_eq!(
+                peers,
+                HashSet::new(),
+                "first client should have timed out of the queue"
+            );
         }
     }
 }
