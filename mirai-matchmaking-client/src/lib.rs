@@ -4,6 +4,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use laminar::{Packet, Socket, SocketEvent};
 use mirai_core::v1::{client::*, CLIENT_PORT, SERVER_PORT};
 use serde::{Deserialize, Serialize};
+use snafu::{ErrorCompat, ResultExt, Snafu};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};

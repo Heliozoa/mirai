@@ -1,25 +1,26 @@
+//! The Mirai matchmaking server facilitates peer discovery for Mirai matchmaking clients.
+//! The server can receive the following messages:
+//!     StatusCheck
+//!         returns Alive to signal that it's running
+//!     Queue
+//!         if the client is not already in the queue, adds the client to the queue
+//!         selects a set of potential matches (currently the entire queue)
+//!         sends the client's info to all potential matches
+//!         returns the potential matches to the client
+//!     Dequeue
+//!         removes the client from the queue
+//!     Heartbeat
+//!         ignored
+//! Clients are dequeued when the connection times out.
+//!
+//! Run using cargo run server_ip, e.g. cargo run 127.0.0.1
+
 use crossbeam_channel::SendError;
 use laminar::{Packet, Socket, SocketEvent};
 use mirai_core::v1::{server::*, SERVER_PORT};
 use snafu::{ErrorCompat, ResultExt, Snafu};
 use std::{collections::HashSet, env, net::SocketAddr};
 
-/// The Mirai matchmaking server facilitates peer discovery for Mirai matchmaking clients.
-/// The server can receive the following messages:
-///     StatusCheck
-///         returns Alive to signal that it's running
-///     Queue
-///         if the client is not already in the queue, adds the client to the queue
-///         selects a set of potential matches (currently the entire queue)
-///         sends the client's info to all potential matches
-///         returns the potential matches to the client
-///     Dequeue
-///         removes the client from the queue
-///     Heartbeat
-///         ignored
-/// Clients are dequeued when the connection times out.
-///
-/// Run using cargo run server_ip, e.g. cargo run 127.0.0.1
 fn main() {
     if let Err(e) = run() {
         eprintln!("{}", e);
