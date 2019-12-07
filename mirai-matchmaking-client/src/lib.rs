@@ -1,3 +1,14 @@
+//! The Mirai matchmaking client facilitates pairing clients by some criteria
+//! aided by a matchmaking server that provides peer discovery.
+//!
+//! The client can send a queue request to a server, after which it will receive
+//! some set of peers that the server has selected for it. The client can challenge
+//! peers, and accept or decline challenges. The client may receive further
+//! peers from the server or request a new set by requeueing.
+//!
+//! Meanwhile, the clients are evaluating the connection quality to each of its peers
+//! by sending ping messages back and forth.
+
 use self::ClientToClient as ToClient;
 use self::ClientToClient as FromClient;
 use crossbeam_channel::{unbounded, Receiver, Sender};
