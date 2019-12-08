@@ -52,6 +52,7 @@ pub enum PeerStatus {
     Confirmed,
 }
 
+/// A potential opponent.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Peer {
     addr: SocketAddr,
@@ -117,6 +118,7 @@ enum Message {
     Quit,
 }
 
+/// The primary struct of the crate.
 pub struct Client {
     status: ArMu<Status>,
     server_addr: SocketAddr,
@@ -130,6 +132,9 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a new Client. Starts up a thread that handles network traffic.
+    /// # Errors
+    /// If binding a socket to the given addr fails.
     pub fn new(addr: IpAddr, server_ip: IpAddr) -> Result<Self, CreateError> {
         let socket_addr = SocketAddr::new(addr, CLIENT_PORT);
         let server_addr = SocketAddr::new(server_ip, SERVER_PORT);
@@ -303,6 +308,10 @@ impl Client {
         }
     }
 
+    /// Queues the client.
+    /// # Errors
+    /// If there is an issue serializing or sending the message, or
+    /// if the handler thread has panicked.
     pub fn queue(&mut self) -> Result<(), ClientError> {
         let mut status = self.status.lock()?;
         if let Status::Idle = *status {
@@ -318,6 +327,10 @@ impl Client {
         Ok(())
     }
 
+    /// Dequeues the client.
+    /// # Errors
+    /// If there is an issue serializing or sending the message, or
+    /// if the handler thread has panicked.
     pub fn dequeue(&self) -> Result<(), ClientError> {
         let mut status = self.status.lock()?;
         if let Status::QueuePending | Status::Queued = *status {
@@ -330,6 +343,10 @@ impl Client {
         Ok(())
     }
 
+    /// Challenges the given peer.
+    /// # Errors
+    /// If there is an issue serializing or sending the message, or
+    /// if the handler thread has panicked.
     pub fn challenge(&self, peer: &mut Peer) -> Result<(), ClientError> {
         let msg = bincode::serialize(&ToClient::Challenge).context(SerializeError)?;
         self.packet_sender
@@ -339,6 +356,11 @@ impl Client {
         Ok(())
     }
 
+    // TODO: change parameter to challenge struct?
+    /// Accepts the challenge from the given peer.
+    /// # Errors
+    /// If there is an issue serializing or sending the message, or
+    /// if the handler thread has panicked.
     pub fn accept(&self, peer: &mut Peer) -> Result<(), ClientError> {
         if self.incoming_challenges.lock()?.contains(&peer.addr) {
             let msg = bincode::serialize(&ToClient::Accept).context(SerializeError)?;
@@ -348,6 +370,10 @@ impl Client {
         Ok(())
     }
 
+    /// Declines the challenge from the given peer.
+    /// # Errors
+    /// If there is an issue serializing or sending the message, or
+    /// if the handler thread has panicked.
     pub fn decline(&self, addr: SocketAddr) -> Result<(), ClientError> {
         if self.incoming_challenges.lock().unwrap().remove(&addr) {
             let msg = bincode::serialize(&ToClient::Decline).unwrap();
