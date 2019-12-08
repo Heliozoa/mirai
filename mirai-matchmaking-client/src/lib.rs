@@ -204,7 +204,7 @@ impl Client {
                                 incoming_challenges.lock()?.insert(packet.addr());
                             }
                             Ok(FromClient::Accept) => {
-                                let mut status = status.lock().unwrap();
+                                let mut status = status.lock()?;
                                 if let Status::Queued = *status {
                                     if outgoing_challenges.lock()?.contains(&packet.addr()) {
                                         let msg = bincode::serialize(&ToClient::Start(0))
@@ -338,7 +338,7 @@ impl Client {
             self.packet_sender
                 .send(Packet::reliable_unordered(self.server_addr, msg))?;
             *status = Status::Idle;
-            *self.server_connection.lock().unwrap() = ServerConnection::Disconnected;
+            *self.server_connection.lock()? = ServerConnection::Disconnected;
         }
         Ok(())
     }
@@ -352,7 +352,7 @@ impl Client {
         self.packet_sender
             .send(Packet::reliable_unordered(peer.addr, msg))?;
         peer.status = PeerStatus::OutgoingChallenge;
-        self.outgoing_challenges.lock().unwrap().insert(peer.addr);
+        self.outgoing_challenges.lock()?.insert(peer.addr);
         Ok(())
     }
 
@@ -375,8 +375,8 @@ impl Client {
     /// If there is an issue serializing or sending the message, or
     /// if the handler thread has panicked.
     pub fn decline(&self, addr: SocketAddr) -> Result<(), ClientError> {
-        if self.incoming_challenges.lock().unwrap().remove(&addr) {
-            let msg = bincode::serialize(&ToClient::Decline).unwrap();
+        if self.incoming_challenges.lock()?.remove(&addr) {
+            let msg = bincode::serialize(&ToClient::Decline).context(SerializeError)?;
             self.packet_sender
                 .send(Packet::reliable_unordered(addr, msg))?;
         }
@@ -384,8 +384,8 @@ impl Client {
     }
 
     pub fn close(self) -> Result<(Receiver<SocketEvent>, Sender<Packet>), ClientError> {
-        self.message_sender.send(Message::Quit).unwrap();
-        self.handle.join().unwrap()
+        self.message_sender.send(Message::Quit)?;
+        self.handle.join()?
     }
 
     pub fn peers(&self) -> Result<HashSet<Peer>, ClientError> {
@@ -419,6 +419,7 @@ pub enum ClientError {
     MutexError,
     SenderError,
     SerializeError { source: Box<bincode::ErrorKind> },
+    ThreadError,
 }
 
 impl<T> From<PoisonError<T>> for ClientError {
@@ -430,6 +431,12 @@ impl<T> From<PoisonError<T>> for ClientError {
 impl<T> From<SendError<T>> for ClientError {
     fn from(_: SendError<T>) -> Self {
         ClientError::SenderError
+    }
+}
+
+impl From<Box<dyn std::any::Any + Send>> for ClientError {
+    fn from(_: Box<dyn std::any::Any + Send>) -> Self {
+        ClientError::ThreadError
     }
 }
 
