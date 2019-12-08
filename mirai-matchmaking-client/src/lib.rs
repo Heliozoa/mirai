@@ -383,23 +383,38 @@ impl Client {
         Ok(())
     }
 
+    /// Closes the client and returns the underlying receiver and sender.
+    /// # Errors
+    /// If the handler thread has panicked.
     pub fn close(self) -> Result<(Receiver<SocketEvent>, Sender<Packet>), ClientError> {
         self.message_sender.send(Message::Quit)?;
         self.handle.join()?
     }
 
+    /// Returns the potential opponents.
+    /// # Errors
+    /// If the handler thread has panicked.
     pub fn peers(&self) -> Result<HashSet<Peer>, ClientError> {
         Ok(self.peers.lock()?.values().cloned().collect())
     }
 
+    /// Returns the incoming challenges.
+    /// # Errors
+    /// If the handler thread has panicked.
     pub fn incoming_challenges(&self) -> Result<HashSet<SocketAddr>, ClientError> {
         Ok(self.incoming_challenges.lock()?.clone())
     }
 
+    /// Returns the outgoing challenges.
+    /// # Errors
+    /// If the handler thread has panicked.
     pub fn outgoing_challenges(&self) -> Result<HashSet<SocketAddr>, ClientError> {
         Ok(self.outgoing_challenges.lock()?.clone())
     }
 
+    /// Checks the match status.
+    /// # Errors
+    /// If the handler thread has panicked.
     pub fn check_match(&self) -> Result<Option<SocketAddr>, ClientError> {
         if let Status::MatchConfirmed(peer) = *self.status.lock()? {
             Ok(Some(peer))
