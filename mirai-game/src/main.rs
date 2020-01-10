@@ -35,12 +35,12 @@ fn main() -> Result<()> {
     } else {
         // matchmaking
 
-        let mut client = Client::new(LOCAL_IP.parse().unwrap(), server_ip.parse().unwrap());
+        let mut client = Client::new(LOCAL_IP.parse().unwrap(), server_ip.parse().unwrap()).unwrap();
         // matchmaking
         client.dequeue();
         client.queue();
         let opp = 'ret: loop {
-            let matches = client.peers();
+            let matches = client.peers().unwrap();
             for mut peer in matches {
                 if let Some(l) = peer.latency() {
                     match peer.status() {
@@ -64,7 +64,7 @@ fn main() -> Result<()> {
         };
 
         client.dequeue();
-        let (receiver, sender) = client.close();
+        let (receiver, sender) = client.close().unwrap();
         let client = GameClient::new(opp.addr(), receiver, sender);
         while let Some(_) = client.check_time_until_start() {}
         p2_input = InputSourceKind::remote(client);
