@@ -8,5 +8,5 @@ edition = "2018"
 mirai-core = { path = "../mirai-core" }
 bincode = "1.2.0"
 laminar = "0.3.2"
-crossbeam-channel = "*"
+crossbeam-channel = "0.3"
 snafu = "0.6"
