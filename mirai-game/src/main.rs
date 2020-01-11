@@ -9,7 +9,6 @@ use mirai_game_client::Client as GameClient;
 use mirai_matchmaking_client::{Client, PeerStatus};
 use std::env;
 use std::io::Result;
-use std::net::SocketAddr;
 
 const LOCAL_IP: &str = "127.0.0.1";
 
@@ -35,10 +34,11 @@ fn main() -> Result<()> {
     } else {
         // matchmaking
 
-        let mut client = Client::new(LOCAL_IP.parse().unwrap(), server_ip.parse().unwrap()).unwrap();
+        let mut client =
+            Client::new(LOCAL_IP.parse().unwrap(), server_ip.parse().unwrap()).unwrap();
         // matchmaking
-        client.dequeue();
-        client.queue();
+        client.dequeue().unwrap();
+        client.queue().unwrap();
         let opp = 'ret: loop {
             let matches = client.peers().unwrap();
             for mut peer in matches {
@@ -50,11 +50,11 @@ fn main() -> Result<()> {
                         }
                         PeerStatus::IncomingChallenge => {
                             println!("accepting");
-                            client.accept(&mut peer);
+                            client.accept(&mut peer).unwrap();
                         }
                         PeerStatus::None => {
                             println!("challenging");
-                            client.challenge(&mut peer);
+                            client.challenge(&mut peer).unwrap();
                         }
                         _ => {}
                     }
@@ -63,7 +63,7 @@ fn main() -> Result<()> {
             std::thread::sleep(std::time::Duration::from_secs(1));
         };
 
-        client.dequeue();
+        client.dequeue().unwrap();
         let (receiver, sender) = client.close().unwrap();
         let client = GameClient::new(opp.addr(), receiver, sender);
         while let Some(_) = client.check_time_until_start() {}
