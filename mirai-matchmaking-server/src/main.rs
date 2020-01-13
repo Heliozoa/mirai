@@ -17,15 +17,17 @@
 
 use crossbeam_channel::SendError;
 use laminar::{Packet, Socket, SocketEvent};
+use log::{debug, error, info, trace, warn};
 use mirai_core::v1::{server::*, SERVER_PORT};
 use snafu::{ErrorCompat, ResultExt, Snafu};
 use std::{collections::HashSet, env, net::SocketAddr};
 
 fn main() {
+    env_logger::init();
     if let Err(e) = run() {
-        eprintln!("{}", e);
+        error!("{}", e);
         if let Some(backtrace) = ErrorCompat::backtrace(&e) {
-            println!("{}", backtrace);
+            error!("{}", backtrace);
         }
     }
 }
@@ -35,6 +37,7 @@ fn run() -> Result<(), StartError> {
     let local_ip = args.get(1).ok_or(StartError::MissingIp)?;
     let local_ip = local_ip.parse().context(InvalidIp { ip: local_ip })?;
     let local_addr = SocketAddr::new(local_ip, SERVER_PORT);
+    debug!("binding {}", local_addr);
     let socket = Socket::bind(local_addr).context(SocketErr)?;
     with_socket(socket).context(InternalServerError)
 }
@@ -55,33 +58,39 @@ pub enum StartError {
 }
 
 fn with_socket(mut socket: Socket) -> Result<(), ServerError> {
-    println!(
+    info!(
         "starting server at {:?}",
         socket.local_addr().context(SocketError)?
     );
     let packet_sender = socket.get_packet_sender();
     let event_receiver = socket.get_event_receiver();
+    trace!("starting thread");
     let _thread = std::thread::spawn(move || socket.start_polling());
+    trace!("started thread");
     let mut queue = HashSet::<SocketAddr>::new();
-    println!("started server");
+    info!("started server");
 
     loop {
         match event_receiver.recv() {
             Ok(event) => match event {
                 SocketEvent::Packet(packet) => {
                     let source = packet.addr();
+                    trace!("received packet from {}", source);
                     let payload = packet.payload();
                     // try to deserialize the payload
                     match bincode::deserialize::<FromClient>(payload) {
                         Ok(msg) => match msg {
                             FromClient::StatusCheck => {
+                                debug!("received status check");
                                 let msg =
                                     bincode::serialize(&ToClient::Alive).context(SerializeError)?;
                                 packet_sender
                                     .send(Packet::reliable_unordered(source, msg))
                                     .context(SenderError)?;
+                                trace!("sent response");
                             }
                             FromClient::Queue => {
+                                debug!("received queue request");
                                 let mut queue_clone = queue.clone();
                                 queue_clone.remove(&source);
                                 let msg = bincode::serialize(&ToClient::Peers(queue_clone.clone()))
@@ -96,9 +105,12 @@ fn with_socket(mut socket: Socket) -> Result<(), ServerError> {
                                         .send(Packet::reliable_unordered(client, msg))
                                         .context(SenderError)?;
                                 }
+                                trace!("sent response");
                                 queue.insert(source);
+                                trace!("added to queue");
                             }
                             FromClient::Dequeue => {
+                                debug!("received dequeue request");
                                 queue.remove(&source);
                             }
                             FromClient::Heartbeat => { /* heartbeat, ignore */ }
