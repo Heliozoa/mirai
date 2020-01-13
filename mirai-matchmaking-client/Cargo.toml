@@ -11,3 +11,7 @@ bincode = "1.2.0"
 laminar = "0.3.2"
 crossbeam-channel = "0.3"
 snafu = "0.6"
+log = "0.4"
+
+[dev-dependencies]
+env_logger = "0.7.1"

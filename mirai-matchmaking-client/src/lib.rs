@@ -8,12 +8,14 @@
 //!
 //! Meanwhile, the clients are evaluating the connection quality to each of its peers
 //! by sending ping messages back and forth.
+//!
 
 use self::ClientToClient as ToClient;
 use self::ClientToClient as FromClient;
 use crossbeam_channel::SendError;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use laminar::{Packet, Socket, SocketEvent};
+use log::{debug, error, info, trace, warn};
 use mirai_core::v1::{client::*, CLIENT_PORT, SERVER_PORT};
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
@@ -136,6 +138,10 @@ impl Client {
     /// # Errors
     /// If binding a socket to the given addr fails.
     pub fn new(addr: IpAddr, server_ip: IpAddr) -> Result<Self, CreateError> {
+        info!(
+            "creating client with address {}:{} and server address {}:{}",
+            addr, CLIENT_PORT, server_ip, SERVER_PORT
+        );
         let socket_addr = SocketAddr::new(addr, CLIENT_PORT);
         let server_addr = SocketAddr::new(server_ip, SERVER_PORT);
         let mut socket = Socket::bind(socket_addr).context(BindError)?;
@@ -195,15 +201,20 @@ impl Client {
     ) -> Result<(Receiver<SocketEvent>, Sender<Packet>), ClientError> {
         let start_time = Instant::now();
         let mut ping_timer = Instant::now() - Duration::from_millis(PING_TIMER_MILLIS);
+        debug!("starting handler");
         loop {
             match event_receiver.try_recv() {
                 Ok(SocketEvent::Packet(packet)) => {
+                    trace!("received packet");
                     if packet.addr() != server_addr {
+                        trace!("received packet from client");
                         match bincode::deserialize::<FromClient>(packet.payload()) {
                             Ok(FromClient::Challenge) => {
+                                debug!("received challenge");
                                 incoming_challenges.lock()?.insert(packet.addr());
                             }
                             Ok(FromClient::Accept) => {
+                                debug!("received accept");
                                 let mut status = status.lock()?;
                                 if let Status::Queued = *status {
                                     if outgoing_challenges.lock()?.contains(&packet.addr()) {
@@ -216,6 +227,7 @@ impl Client {
                                 }
                             }
                             Ok(FromClient::Decline) => {
+                                debug!("received decline");
                                 outgoing_challenges.lock()?.remove(&packet.addr());
                                 let mut status = status.lock()?;
                                 if let Status::MatchPending(addr) = *status {
@@ -226,6 +238,7 @@ impl Client {
                                 }
                             }
                             Ok(FromClient::Start(time)) => {
+                                debug!("received start");
                                 let mut status = status.lock()?;
                                 if let Status::Queued = *status {
                                     // they are match pending
@@ -244,11 +257,13 @@ impl Client {
                                 }
                             }
                             Ok(FromClient::Ping(remote_time)) => {
+                                trace!("received ping");
                                 let msg = bincode::serialize(&ToClient::PingResponse(remote_time))
                                     .context(SerializeError)?;
                                 packet_sender.send(Packet::unreliable(packet.addr(), msg))?;
                             }
                             Ok(FromClient::PingResponse(past_local_time)) => {
+                                trace!("received pingresponse");
                                 let mut peers = peers.lock()?;
                                 if let Some(peer) = peers.get_mut(&packet.addr()) {
                                     let local_time = start_time.elapsed().as_nanos();
@@ -259,8 +274,10 @@ impl Client {
                             Err(_) => {}
                         }
                     } else {
+                        trace!("received packet from server");
                         match bincode::deserialize::<FromServer>(packet.payload()) {
                             Ok(FromServer::Peers(new_peers)) => {
+                                debug!("received peers");
                                 let mut peers = peers.lock()?;
                                 for peer in new_peers {
                                     peers.insert(peer, Peer::new(peer));
@@ -272,22 +289,30 @@ impl Client {
                                 }
                             }
                             Ok(FromServer::Queued(addr)) => {
+                                debug!("received queued");
                                 peers.lock()?.insert(addr, Peer::new(addr));
                             }
                             Ok(FromServer::Dequeued(addr)) => {
+                                debug!("received dequeued");
                                 peers.lock()?.remove(&addr);
                             }
-                            _ => {}
+                            _ => {
+                                warn!("unknown packet from server");
+                            }
                         }
                     }
                 }
                 Ok(SocketEvent::Connect(addr)) => {
+                    trace!("connected");
                     if addr == server_addr {
+                        info!("connected to server");
                         *server_connection.lock()? = ServerConnection::Connected;
                     }
                 }
                 Ok(SocketEvent::Timeout(addr)) => {
+                    trace!("disconnected");
                     if addr == server_addr {
+                        info!("disconnected from server");
                         *server_connection.lock()? = ServerConnection::Disconnected;
                     }
                 }
@@ -313,6 +338,7 @@ impl Client {
     /// If there is an issue serializing or sending the message, or
     /// if the handler thread has panicked.
     pub fn queue(&mut self) -> Result<(), ClientError> {
+        debug!("queueing");
         let mut status = self.status.lock()?;
         if let Status::Idle = *status {
             let msg = bincode::serialize(&ToServer::Queue).context(SerializeError)?;
@@ -320,7 +346,7 @@ impl Client {
                 .send(Packet::reliable_unordered(self.server_addr, msg))?;
             let mut server_connection = self.server_connection.lock()?;
             if let ServerConnection::Disconnected = *server_connection {
-                *server_connection = ServerConnection::Connecting;
+                debug!("asd");
             }
             *status = Status::QueuePending;
         }
@@ -458,9 +484,16 @@ impl From<Box<dyn std::any::Any + Send>> for ClientError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::mem::discriminant;
+
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
 
     #[test]
     fn sample_test() {
+        init();
+
         let ip1 = "127.0.0.1".parse().unwrap();
         let ip2 = "127.0.0.2".parse().unwrap();
         let addr1 = SocketAddr::new(ip1, CLIENT_PORT);
@@ -470,8 +503,8 @@ mod test {
 
         let mut server = Socket::bind((ip1, SERVER_PORT)).unwrap();
 
-        client1.queue();
-        client2.queue();
+        client1.queue().unwrap();
+        client2.queue().unwrap();
 
         thread::sleep(Duration::from_millis(100));
         server.manual_poll(Instant::now());
