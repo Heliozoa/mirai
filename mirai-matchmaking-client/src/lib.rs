@@ -104,7 +104,7 @@ impl Hash for Peer {
 enum ServerConnection {
     Connected,
     Disconnected,
-    Connecting,
+    Connecting(Instant),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -329,6 +329,12 @@ impl Client {
                     packet_sender.send(Packet::unreliable(peer.addr, msg))?;
                 }
                 ping_timer = Instant::now();
+            }
+            let mut server_connection = server_connection.lock()?;
+            if let ServerConnection::Connecting(time_limit) = *server_connection {
+                if Instant::now() > time_limit {
+                    *server_connection = ServerConnection::Disconnected;
+                }
             }
         }
     }
