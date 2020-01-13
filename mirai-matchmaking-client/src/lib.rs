@@ -148,7 +148,7 @@ impl Client {
         let event_receiver = socket.get_event_receiver();
         let packet_sender = socket.get_packet_sender();
         let thread_packet_sender = socket.get_packet_sender();
-        let handle = thread::spawn(move || socket.start_polling());
+        let _handle = thread::spawn(move || socket.start_polling());
 
         let peers = armu(HashMap::new());
         let incoming_challenges = armu(HashSet::new());
