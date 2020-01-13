@@ -29,5 +29,5 @@ The game client handles all gameplay-related logic, including
 - detecting and adapting to drift, packet loss, latency spiking etc.
 
 #### mirai-game
-A sample game that should provide an interface for all the functionality provided by Mirai. To accomplish this, it should
+A sample game that should provide implement all the functionality provided by Mirai. To accomplish this, it should
 - be able to quickly save and load the game state
