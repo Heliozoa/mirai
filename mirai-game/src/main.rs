@@ -14,7 +14,8 @@ const LOCAL_IP: &str = "127.0.0.1";
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args().collect();
-    let server_ip = &args[1];
+    let server_ip = &args.get(1).expect("missing server IP");
+    let server_ip = server_ip.parse().expect("invalid format for server IP");
     let p1_input = InputSourceKind::local(KeyCode::A, KeyCode::D, KeyCode::S);
     let p2_input;
 
@@ -25,17 +26,15 @@ fn main() -> Result<()> {
     match s.trim().parse() {
         Ok(1) => single_player = true,
         Ok(2) => single_player = false,
-        _ => panic!("asd"),
+        _ => panic!("invalid value"),
     }
-    println!("{}", single_player);
 
     if single_player {
         p2_input = InputSourceKind::local(KeyCode::Left, KeyCode::Right, KeyCode::Down);
     } else {
         // matchmaking
 
-        let mut client =
-            Client::new(LOCAL_IP.parse().unwrap(), server_ip.parse().unwrap()).unwrap();
+        let mut client = Client::new(LOCAL_IP.parse().unwrap(), server_ip).unwrap();
         // matchmaking
         client.dequeue().unwrap();
         client.queue().unwrap();
